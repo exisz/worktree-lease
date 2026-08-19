@@ -396,3 +396,17 @@ def test_sync_primary_skips_dirty_primary(repo, tmp_path):
     cli.sync_primary(common, "origin", "main")
 
     assert head_of(repo) == before != remote_sha
+
+
+def test_release_fast_forwards_primary_even_with_nothing_to_deliver(repo, tmp_path):
+    """Work can reach the delivery branch by other means; the primary must not
+    be left stale just because this worktree had nothing of its own to push."""
+    root, common = cli.repo_info(repo)
+    cli.save(common, expired_record(repo))
+    remote_sha = advance_origin(repo, tmp_path, name="elsewhere")
+    assert head_of(repo) != remote_sha
+
+    result = run_cli("release", "--target", "main", cwd=repo)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "released"
+    assert head_of(repo) == remote_sha

@@ -3,6 +3,17 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/); versioning is [SemVer](https://semver.org/).
 
+## [1.1.1] - 2026-08-20
+
+### Fixed
+
+- `release` only fast-forwarded the primary worktree on the verified-delivery
+  path. A clean, nothing-to-deliver release left the primary stale even though
+  the work had reached the delivery branch by other means. `sync_primary()` now
+  runs on every release path.
+- `sync_primary()` judged drift from possibly stale cached remote refs; it now
+  fetches the remote first.
+
 ## [1.1.0] - 2026-08-20
 
 ### Fixed

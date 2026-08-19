@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 DEFAULT_TTL = int(os.environ.get("WORKTREE_LEASE_TTL", "86400"))
 
@@ -303,6 +303,9 @@ def sync_primary(common, remote="origin", target=None):
     if target and branch != target:
         return
     ref = f"refs/remotes/{remote}/{branch}"
+    # Release may be the first thing to learn about the delivery push, so make
+    # sure the remote ref is current before judging drift.
+    git(primary, "fetch", "--prune", remote, check=False)
     if git(primary, "rev-parse", "--verify", "--quiet", ref, check=False).returncode != 0:
         return
     local = git(primary, "rev-parse", branch, check=False).stdout.strip()
@@ -469,7 +472,10 @@ def cmd_release(args):
         target = delivery_target(root, args.remote, args.target)
         delivered_commit = verify_remote_delivery(root, args.remote, target)
         status = "released"
-        sync_primary(common, args.remote, target)
+    # Best effort on every release path, including the nothing-to-deliver path:
+    # work may have reached the delivery branch by other means, and leaving the
+    # primary worktree stale is exactly the drift this guards against.
+    sync_primary(common, args.remote, target)
     with mutex(common):
         item = current_record(root, common)
         if not item:

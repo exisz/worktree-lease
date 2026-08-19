@@ -301,3 +301,98 @@ def test_release_allows_clean_and_not_ahead_without_attestation(repo):
     persisted = cli.current_record(root, common)
     assert persisted["status"] == "released"
     assert "nothing to deliver" in persisted["settledReason"]
+
+
+# --------------------------------------------------------------------------
+# primary worktree freshness (remote-first drift)
+# --------------------------------------------------------------------------
+
+
+def advance_origin(repo, tmp_path, name="other"):
+    """Push a new commit to origin from a second clone; returns its sha."""
+    origin = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        cwd=str(repo), env=ENV, text=True, capture_output=True, check=True,
+    ).stdout.strip()
+    other = tmp_path / name
+    sh("git", "clone", origin, str(other), cwd=tmp_path)
+    write(other / f"{name}.txt", "remote work\n")
+    sh("git", "add", f"{name}.txt", cwd=other)
+    sh("git", "commit", "-m", f"{name} remote commit", cwd=other)
+    sh("git", "push", "origin", "main", cwd=other)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(other), env=ENV, text=True, capture_output=True, check=True,
+    ).stdout.strip()
+
+
+def head_of(path, rev="HEAD"):
+    return subprocess.run(
+        ["git", "rev-parse", rev],
+        cwd=str(path), env=ENV, text=True, capture_output=True, check=True,
+    ).stdout.strip()
+
+
+def test_claim_fast_forwards_stale_primary_and_branches_from_remote_tip(repo, tmp_path):
+    remote_sha = advance_origin(repo, tmp_path)
+    assert head_of(repo) != remote_sha
+
+    result = run_cli("claim", "--thread", "t-ff", cwd=repo)
+    assert result.returncode == 0, result.stderr
+
+    # Primary was fast-forwarded rather than left behind forever.
+    assert head_of(repo) == remote_sha
+    # And the issued worktree is based on the freshest remote tip.
+    issued = Path(result.stdout.strip())
+    assert issued.exists()
+    assert head_of(issued) == remote_sha
+
+
+def test_status_warns_when_primary_has_diverged(repo, tmp_path):
+    advance_origin(repo, tmp_path)
+    write(repo / "local.txt", "local only\n")
+    sh("git", "add", "local.txt", cwd=repo)
+    sh("git", "commit", "-m", "local only commit", cwd=repo)
+    sh("git", "fetch", "origin", cwd=repo)
+
+    result = run_cli("status", cwd=repo)
+    assert result.returncode == 0, result.stderr
+    assert "DIVERGED_PRIMARY" in result.stderr
+    assert "ahead" in result.stderr and "behind" in result.stderr
+
+
+def test_status_warns_when_primary_is_merely_behind(repo, tmp_path):
+    advance_origin(repo, tmp_path)
+    sh("git", "fetch", "origin", cwd=repo)
+
+    result = run_cli("status", cwd=repo)
+    assert result.returncode == 0, result.stderr
+    assert "DIVERGED_PRIMARY" in result.stderr
+    assert "behind" in result.stderr
+
+
+def test_sync_primary_refuses_to_merge_a_diverged_primary(repo, tmp_path):
+    advance_origin(repo, tmp_path)
+    write(repo / "local.txt", "local only\n")
+    sh("git", "add", "local.txt", cwd=repo)
+    sh("git", "commit", "-m", "local only commit", cwd=repo)
+    sh("git", "fetch", "origin", cwd=repo)
+    before = head_of(repo)
+
+    root, common = cli.repo_info(repo)
+    cli.sync_primary(common, "origin", "main")
+
+    # Divergence must never be silently merged away.
+    assert head_of(repo) == before
+
+
+def test_sync_primary_skips_dirty_primary(repo, tmp_path):
+    remote_sha = advance_origin(repo, tmp_path)
+    write(repo / "scratch.txt", "uncommitted\n")
+    sh("git", "fetch", "origin", cwd=repo)
+    before = head_of(repo)
+
+    root, common = cli.repo_info(repo)
+    cli.sync_primary(common, "origin", "main")
+
+    assert head_of(repo) == before != remote_sha

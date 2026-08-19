@@ -82,6 +82,21 @@ An expired lease that still carries work is marked `lost` and reported on stderr
 since become clean and not-ahead is auto-demoted back to the reusable pool by
 `reap_settled()` — otherwise zombies would accumulate forever.
 
+### Primary worktree freshness
+
+Remote-first delivery pushes thread branches straight to the delivery branch, so
+nothing naturally advances the repository's *primary* worktree. Left alone it
+drifts monotonically behind and every human who opens the repo sees stale code.
+
+`claim` and a verified `release` therefore fetch and **fast-forward the primary
+worktree** when it is clean and on the delivery branch. This is best effort and
+never fatal.
+
+Divergence is never silently merged. When the primary worktree has both local
+and remote commits, or is behind but dirty, the tool prints `DIVERGED_PRIMARY:`
+on stderr and leaves it untouched. `status` reports the same warning for a
+primary that is behind or diverged.
+
 ### Release rule
 
 | Worktree state | Result |
@@ -99,6 +114,10 @@ defaults to `$OPENCLAW_SESSION_KEY` / `$OPENCLAW_THREAD_ID`. New worktrees go to
 `<repo>-worktrees/` beside the primary repository unless overridden by
 `--worktrees-dir` or `$WORKTREE_LEASE_HOME`.
 
+Before resolving the base commit it fetches `origin` and fast-forwards the
+primary worktree, so a new worktree always branches from the freshest known
+remote tip.
+
 ### `touch [repo]`
 
 Refreshes the current worktree's lease timestamp.
@@ -110,7 +129,8 @@ Closes out the lease per the release rule above.
 ### `status [repo] [--json]`
 
 Lists leases with `effectiveStatus`, `ageSeconds`, `lastCommitAt`, and
-`aheadCommits`.
+`aheadCommits`. Warns on stderr with `DIVERGED_PRIMARY:` when the primary
+worktree is behind or diverged from its upstream.
 
 ### `git -- <git args>`
 

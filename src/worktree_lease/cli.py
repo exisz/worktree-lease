@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 DEFAULT_TTL = int(os.environ.get("WORKTREE_LEASE_TTL", "86400"))
 
@@ -278,6 +278,62 @@ def base_ref(repo):
     return branch or "HEAD"
 
 
+def primary_worktree(common):
+    """Filesystem path of the repository's primary (non-linked) worktree."""
+    return common.parent if common.name == ".git" else common
+
+
+def sync_primary(common, remote="origin", target=None):
+    """Fast-forward the primary worktree's checked-out branch to its upstream.
+
+    Remote-first delivery pushes thread branches straight to the delivery
+    branch, so nothing ever advances the primary worktree. Left alone it drifts
+    monotonically behind and every human who opens the repo sees stale code.
+
+    This is best effort and never fatal: it only fast-forwards, only when the
+    primary worktree is clean and on the delivery branch. Divergence is a real
+    problem, so it is reported loudly instead of being silently merged.
+    """
+    primary = primary_worktree(common)
+    if not primary.exists():
+        return
+    branch = git(primary, "branch", "--show-current", check=False).stdout.strip()
+    if not branch:
+        return
+    if target and branch != target:
+        return
+    ref = f"refs/remotes/{remote}/{branch}"
+    if git(primary, "rev-parse", "--verify", "--quiet", ref, check=False).returncode != 0:
+        return
+    local = git(primary, "rev-parse", branch, check=False).stdout.strip()
+    upstream = git(primary, "rev-parse", ref, check=False).stdout.strip()
+    if not local or not upstream or local == upstream:
+        return
+    if git(primary, "merge-base", "--is-ancestor", branch, ref, check=False).returncode != 0:
+        print(
+            f"DIVERGED_PRIMARY: {primary} branch {branch} has diverged from {remote}/{branch}; "
+            "it cannot be fast-forwarded. Tell the user and ask whether to investigate.",
+            file=sys.stderr,
+        )
+        return
+    if not is_clean(primary):
+        print(
+            f"DIVERGED_PRIMARY: {primary} is behind {remote}/{branch} but has uncommitted changes; "
+            "skipped fast-forward. Tell the user and ask whether to investigate.",
+            file=sys.stderr,
+        )
+        return
+    result = git(primary, "merge", "--ff-only", ref, check=False)
+    if result.returncode != 0:
+        print(
+            f"DIVERGED_PRIMARY: fast-forward of {primary} to {remote}/{branch} failed: "
+            + (result.stderr or result.stdout or "").strip(),
+            file=sys.stderr,
+        )
+        return
+    print(f"primary worktree {primary} fast-forwarded {local[:8]}..{upstream[:8]}", file=sys.stderr)
+
+
 def worktrees_root(repo, common, explicit_root=None):
     if explicit_root:
         return Path(explicit_root).expanduser().resolve() / slug(repo.name)
@@ -292,6 +348,11 @@ def cmd_claim(args):
     thread_slug = slug(thread)
     ttl = args.ttl
     home = worktrees_root(repo, common, args.worktrees_dir)
+    # Remote-first: new worktrees must branch from the freshest known remote
+    # tip, so refresh remote refs before resolving the base and keep the
+    # primary worktree from drifting behind.
+    git(repo, "fetch", "--prune", "origin", check=False)
+    sync_primary(common)
     with mutex(common):
         items = records(common)
         now = time.time()
@@ -408,6 +469,7 @@ def cmd_release(args):
         target = delivery_target(root, args.remote, args.target)
         delivered_commit = verify_remote_delivery(root, args.remote, target)
         status = "released"
+        sync_primary(common, args.remote, target)
     with mutex(common):
         item = current_record(root, common)
         if not item:
@@ -444,11 +506,44 @@ def cmd_status(args):
         else:
             item["effectiveStatus"] = item.get("status", "unknown")
         data.append(item)
+    primary_drift(common)
     if args.json:
         print(json.dumps(data, indent=2, sort_keys=True))
     else:
         for item in data:
             print(f"{item['effectiveStatus']:<12} {item.get('thread', 'legacy'):<32} {item['ageSeconds']:>7}s  {item['worktree']}")
+
+
+def primary_drift(common, remote="origin"):
+    """Report a primary worktree that is behind or diverged from its upstream."""
+    primary = primary_worktree(common)
+    if not primary.exists():
+        return
+    branch = git(primary, "branch", "--show-current", check=False).stdout.strip()
+    if not branch:
+        return
+    ref = f"refs/remotes/{remote}/{branch}"
+    if git(primary, "rev-parse", "--verify", "--quiet", ref, check=False).returncode != 0:
+        return
+    counts = git(primary, "rev-list", "--left-right", "--count", f"{branch}...{ref}", check=False)
+    if counts.returncode != 0:
+        return
+    parts = counts.stdout.split()
+    if len(parts) != 2:
+        return
+    ahead, behind = int(parts[0]), int(parts[1])
+    if ahead and behind:
+        print(
+            f"DIVERGED_PRIMARY: {primary} branch {branch} is {ahead} ahead and {behind} behind "
+            f"{remote}/{branch}. Tell the user and ask whether to investigate.",
+            file=sys.stderr,
+        )
+    elif behind:
+        print(
+            f"DIVERGED_PRIMARY: {primary} branch {branch} is {behind} behind {remote}/{branch}; "
+            "run a claim or release to fast-forward it.",
+            file=sys.stderr,
+        )
 
 
 def cmd_git(args):

@@ -257,19 +257,6 @@ def reap_settled(items, common):
     return changed
 
 
-def warn_lost(items):
-    lost = [item for item in items if item.get("status") == "lost"]
-    if not lost:
-        return
-    print(
-        f"LOST_WORKTREE: found {len(lost)} abandoned dirty worktree(s); "
-        "current claim will continue. Tell the user and ask whether to investigate:",
-        file=sys.stderr,
-    )
-    for item in lost:
-        print(f"  thread={item.get('thread', 'legacy')} path={item.get('worktree')}", file=sys.stderr)
-
-
 def base_ref(repo):
     origin_head = git(repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD", check=False)
     if origin_head.returncode == 0 and origin_head.stdout.strip():
@@ -374,7 +361,6 @@ def cmd_claim(args):
                     item["lastActiveAt"] = now_iso()
                     item["status"] = "active"
                     save(common, item)
-                    warn_lost(items)
                     print(path)
                     return
         reusable = None
@@ -404,7 +390,6 @@ def cmd_claim(args):
             Path(reusable["_file"]).unlink(missing_ok=True)
         save(common, item)
         items.append(item)
-        warn_lost(items)
     print(target)
 
 

@@ -110,6 +110,23 @@ def reject_openclaw_workspace_repo(root, common):
             )
 
 
+def reject_repository_policy(root, common):
+    # Check the primary too: an older linked checkout must not bypass policy.
+    for directory in dict.fromkeys([Path(root), primary_worktree(common)]):
+        policy = directory / ".worktreerc"
+        if not policy.exists():
+            continue
+        try:
+            lines = [line.split("#", 1)[0].strip() for line in policy.read_text().splitlines()]
+            lines = [line for line in lines if line]
+        except (OSError, UnicodeError) as exc:
+            raise SystemExit(f"cannot read repository policy {policy}: {exc}")
+        if len(lines) != 1 or lines[0] not in ("allow_worktree: false", "allow_worktree: true"):
+            raise SystemExit(f"invalid repository policy {policy}: expected allow_worktree: false or true")
+        if lines[0] == "allow_worktree: false":
+            raise SystemExit(f"refusing to lease repository: {policy} declares allow_worktree: false")
+
+
 def lease_dir(common):
     path = common / "worktree-leases"
     path.mkdir(parents=True, exist_ok=True)
@@ -333,6 +350,7 @@ def worktrees_root(repo, common, explicit_root=None):
 
 def cmd_claim(args):
     repo, common = repo_info(args.repo)
+    reject_repository_policy(repo, common)
     reject_openclaw_workspace_repo(repo, common)
     thread = thread_id(args)
     thread_slug = slug(thread)

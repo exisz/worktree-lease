@@ -410,3 +410,33 @@ def test_release_fast_forwards_primary_even_with_nothing_to_deliver(repo, tmp_pa
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "released"
     assert head_of(repo) == remote_sha
+
+
+def test_repo_policy_denies_primary_and_existing_linked_checkout(repo, tmp_path):
+    linked = tmp_path / "linked"
+    sh("git", "worktree", "add", "-b", "older", str(linked), cwd=repo)
+    write(repo / ".worktreerc", "# Instance state directory\nallow_worktree: false\n")
+    for path in (repo, linked):
+        root, common = cli.repo_info(path)
+        with pytest.raises(SystemExit, match="allow_worktree: false"):
+            cli.reject_repository_policy(root, common)
+
+
+def test_repo_policy_survives_clone(repo, tmp_path):
+    write(repo / ".worktreerc", "allow_worktree: false\n")
+    sh("git", "add", ".worktreerc", cwd=repo)
+    sh("git", "commit", "-m", "policy", cwd=repo)
+    clone = tmp_path / "moved"
+    sh("git", "clone", str(repo), str(clone), cwd=tmp_path)
+    with pytest.raises(SystemExit, match="allow_worktree: false"):
+        cli.reject_repository_policy(*cli.repo_info(clone))
+
+
+def test_repo_policy_invalid_fails_closed_and_true_allows(repo):
+    root, common = cli.repo_info(repo)
+    cli.reject_repository_policy(root, common)
+    write(repo / ".worktreerc", "allow_worktree: true\n")
+    cli.reject_repository_policy(root, common)
+    write(repo / ".worktreerc", "allow_worktree: flase\n")
+    with pytest.raises(SystemExit, match="invalid repository policy"):
+        cli.reject_repository_policy(root, common)

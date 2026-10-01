@@ -164,3 +164,7 @@ Tests create real temporary Git repositories; there are no mocks.
 ## License
 
 MIT
+
+## Repository policy
+
+Commit a `.worktreerc` at the repository root containing `allow_worktree: false` to prohibit leases for instance state or other single-checkout repositories. The policy travels with clones and moved repositories. Claims check both the requested checkout and its primary checkout before fetch or lease mutation; existing linked checkouts cannot bypass a primary prohibition. `allow_worktree: true` permits normal leasing but does not override the existing OpenClaw workspace exclusion. Blank lines and `#` comments are supported; malformed policies fail closed. This controls this tool, not raw Git commands.

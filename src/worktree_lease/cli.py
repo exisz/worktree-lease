@@ -59,8 +59,11 @@ def openclaw_config_path():
 
 
 def configured_agents():
-    result = run(["openclaw", "agents", "list", "--json"], check=False)
-    if result.returncode == 0:
+    try:
+        result = run(["openclaw", "agents", "list", "--json"], check=False)
+    except FileNotFoundError:
+        result = None  # OpenClaw is optional; still enforce any local config.
+    if result is not None and result.returncode == 0:
         try:
             agents = json.loads(result.stdout)
             if isinstance(agents, list):

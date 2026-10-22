@@ -12,6 +12,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/); versioning is [S
 - Existing leases retain their paths; explicit directory overrides retain their
   previous layout. No automatic migration of legacy sibling worktrees.
 
+### Fixed
+
+- Fall back to local OpenClaw configuration when its optional CLI is absent,
+  allowing standalone installations and CI to claim worktrees safely.
+
 ## [1.1.1] - 2026-08-20
 
 ### Fixed

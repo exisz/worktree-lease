@@ -485,3 +485,17 @@ def test_nested_default_in_absorbed_submodule(repo, tmp_path):
     assert Path(claimed.stdout.strip()).parent == child / '.worktrees'
     assert cli.is_clean(child)
     assert cli.is_clean(parent)
+
+
+def test_missing_openclaw_cli_still_reads_workspace_guard_config(tmp_path):
+    config = tmp_path / 'openclaw.json'
+    agents = [{'id': 'test', 'workspace': str(tmp_path / 'workspace')}]
+    config.write_text(json.dumps({'agents': {'list': agents}}))
+    result = subprocess.run(
+        [sys.executable, '-c', 'import json; from worktree_lease.cli import configured_agents; print(json.dumps(configured_agents()))'],
+        env={**ENV, 'PATH': '', 'OPENCLAW_CONFIG_PATH': str(config),
+             'PYTHONPATH': str(Path(__file__).resolve().parents[1] / 'src')},
+        text=True, capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == agents

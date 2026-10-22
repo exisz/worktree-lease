@@ -440,3 +440,48 @@ def test_repo_policy_invalid_fails_closed_and_true_allows(repo):
     write(repo / ".worktreerc", "allow_worktree: flase\n")
     with pytest.raises(SystemExit, match="invalid repository policy"):
         cli.reject_repository_policy(root, common)
+
+
+def test_nested_default_is_clean_and_resolves_primary(repo):
+    exclude = repo / '.git/info/exclude'
+    exclude.write_text('# preserved without newline')
+    first = run_cli('claim', '--thread', 'nested-first', cwd=repo)
+    assert first.returncode == 0, first.stderr
+    path = Path(first.stdout.strip())
+    assert path.parent == repo / '.worktrees'
+    assert cli.is_clean(repo)
+    second = run_cli('claim', '--thread', 'nested-second', cwd=path)
+    assert second.returncode == 0, second.stderr
+    assert Path(second.stdout.strip()).parent == repo / '.worktrees'
+    assert exclude.read_text() == '# preserved without newline\n/.worktrees/\n'
+    assert cli.is_clean(repo)
+
+
+def test_legacy_active_lease_and_explicit_override_remain_supported(repo, tmp_path):
+    override = tmp_path / 'legacy'
+    first = run_cli('claim', '--thread', 'legacy-thread', '--worktrees-dir', str(override), cwd=repo)
+    assert first.returncode == 0, first.stderr
+    legacy = Path(first.stdout.strip())
+    assert legacy.parent == override / repo.name
+    again = run_cli('claim', '--thread', 'legacy-thread', cwd=repo)
+    assert again.returncode == 0, again.stderr
+    assert Path(again.stdout.strip()) == legacy
+    assert run_cli('touch', cwd=legacy).returncode == 0
+    released = run_cli('release', cwd=legacy)
+    assert released.returncode == 0, released.stderr
+    fresh = run_cli('claim', '--thread', 'fresh-thread', cwd=repo)
+    assert fresh.returncode == 0, fresh.stderr
+    assert Path(fresh.stdout.strip()).parent == repo / '.worktrees'
+
+
+def test_nested_default_in_absorbed_submodule(repo, tmp_path):
+    parent = tmp_path / 'parent'
+    sh('git', 'init', '-b', 'main', str(parent), cwd=tmp_path)
+    sh('git', '-c', 'protocol.file.allow=always', 'submodule', 'add', str(repo), 'repos/child', cwd=parent)
+    sh('git', 'commit', '-am', 'add child', cwd=parent)
+    child = parent / 'repos/child'
+    claimed = run_cli('claim', '--thread', 'child-thread', cwd=child)
+    assert claimed.returncode == 0, claimed.stderr
+    assert Path(claimed.stdout.strip()).parent == child / '.worktrees'
+    assert cli.is_clean(child)
+    assert cli.is_clean(parent)

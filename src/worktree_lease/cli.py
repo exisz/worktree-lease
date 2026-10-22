@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 DEFAULT_TTL = int(os.environ.get("WORKTREE_LEASE_TTL", "86400"))
 
@@ -284,7 +284,15 @@ def base_ref(repo):
 
 def primary_worktree(common):
     """Filesystem path of the repository's primary (non-linked) worktree."""
-    return common.parent if common.name == ".git" else common
+    configured = run(["git", "--git-dir", str(common), "config", "--get", "core.worktree"], check=False)
+    if configured.returncode == 0 and configured.stdout.strip():
+        path = Path(configured.stdout.strip())
+        return (path if path.is_absolute() else common / path).resolve()
+    result = run(["git", "--git-dir", str(common), "worktree", "list", "--porcelain", "-z"])
+    for field in result.stdout.split("\0"):
+        if field.startswith("worktree "):
+            return Path(field[len("worktree "):]).resolve()
+    raise SystemExit(f"cannot resolve primary worktree for {common}")
 
 
 def sync_primary(common, remote="origin", target=None):
@@ -344,8 +352,17 @@ def sync_primary(common, remote="origin", target=None):
 def worktrees_root(repo, common, explicit_root=None):
     if explicit_root:
         return Path(explicit_root).expanduser().resolve() / slug(repo.name)
-    primary_repo = common.parent if common.name == ".git" else repo
-    return primary_repo.parent / f"{slug(primary_repo.name)}-worktrees"
+    return primary_worktree(common) / ".worktrees"
+
+
+def exclude_nested_worktrees(common):
+    """Keep generated checkouts out of status without changing tracked files."""
+    exclude = common / "info" / "exclude"
+    text = exclude.read_text() if exclude.exists() else ""
+    if "/.worktrees/" not in text.splitlines():
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        with exclude.open("a") as stream:
+            stream.write(("\n" if text and not text.endswith("\n") else "") + "/.worktrees/\n")
 
 
 def cmd_claim(args):
@@ -356,6 +373,9 @@ def cmd_claim(args):
     thread_slug = slug(thread)
     ttl = args.ttl
     home = worktrees_root(repo, common, args.worktrees_dir)
+    if home == primary_worktree(common) / ".worktrees":
+        with mutex(common):
+            exclude_nested_worktrees(common)
     # Remote-first: new worktrees must branch from the freshest known remote
     # tip, so refresh remote refs before resolving the base and keep the
     # primary worktree from drifting behind.
@@ -574,7 +594,7 @@ def parser():
     c.add_argument(
         "--worktrees-dir",
         default=os.environ.get("WORKTREE_LEASE_HOME"),
-        help="override worktree parent; defaults to <repo>-worktrees beside the primary repo",
+        help="override worktree parent; defaults to <primary-repo>/.worktrees",
     )
     c.set_defaults(func=cmd_claim)
     for name, func in (("touch", cmd_touch), ("release", cmd_release)):

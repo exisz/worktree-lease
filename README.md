@@ -111,8 +111,17 @@ primary that is behind or diverged.
 
 Returns the path to this thread's worktree, creating one if needed. Thread key
 defaults to `$OPENCLAW_SESSION_KEY` / `$OPENCLAW_THREAD_ID`. New worktrees go to
-`<repo>-worktrees/` beside the primary repository unless overridden by
-`--worktrees-dir` or `$WORKTREE_LEASE_HOME`.
+`<primary-repo>/.worktrees/<thread>-<timestamp>/`, even when claimed from a
+linked worktree or submodule. The generated directory is automatically ignored
+using the shared Git `info/exclude`; no tracked ignore file is changed.
+
+Existing leases keep their original paths, including legacy sibling worktrees.
+They can still be touched, released, and reclaimed; an active lease for the same
+thread is returned in place. New default claims only reuse paths under the new
+root, so legacy checkouts are never silently moved.
+
+Explicit `--worktrees-dir DIR` or `$WORKTREE_LEASE_HOME` overrides retain their
+existing `DIR/<repo-name>/` layout. Clear these overrides to use the new default.
 
 Before resolving the base commit it fetches `origin` and fast-forwards the
 primary worktree, so a new worktree always branches from the freshest known

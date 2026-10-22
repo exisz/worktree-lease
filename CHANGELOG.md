@@ -3,6 +3,15 @@
 All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/); versioning is [SemVer](https://semver.org/).
 
+## [1.2.0] - 2026-10-22
+
+### Changed
+
+- New worktrees default to `<primary-repo>/.worktrees/`, automatically excluded
+  from Git status. Resolve the primary checkout for linked worktrees and submodules.
+- Existing leases retain their paths; explicit directory overrides retain their
+  previous layout. No automatic migration of legacy sibling worktrees.
+
 ## [1.1.1] - 2026-08-20
 
 ### Fixed
